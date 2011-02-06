@@ -131,11 +131,6 @@ abstract class Hive_Model {
 	protected $__data = array();
 
 	/**
-	 * @var  array  changed data
-	 */
-	protected $__changed = array();
-
-	/**
 	 * @var  array  relation data
 	 */
 	protected $__relations = array();
@@ -224,21 +219,13 @@ abstract class Hive_Model {
 			));
 		}
 
-		if (array_key_exists($name, $this->__changed))
+		if ($this->prepared() AND ! $this->loaded() AND ! $this->loading())
 		{
-			// The most up to date value for this field
-			return $this->__changed[$name];
+			// Lazy loading!
+			$this->read();
 		}
-		else
-		{
-			if ($this->prepared() AND ! $this->loaded() AND ! $this->loading())
-			{
-				// Lazy loading!
-				$this->read();
-			}
 
-			return $this->__data[$name];
-		}
+		return $this->__data[$name];
 	}
 
 	/**
@@ -305,27 +292,12 @@ abstract class Hive_Model {
 			$value = $callback($this, $value);
 		}
 
-		if ($this->__data[$name] === $value)
-		{
-			// Value is the same as original, remove changes
-			unset($this->__changed[$name]);
-		}
-		else
-		{
-			if ($field->unique)
-			{
-				if ($value)
-				{
-					$this->prepared(TRUE);
-				}
-				else
-				{
-					$this->prepared(FALSE);
-				}
-			}
+		// Update the value
+		$this->__data[$name] = $value;
 
-			// Value has been changed
-			return $this->__changed[$name] = $value;
+		if ($field->unique AND $this->__data->is_changed($name))
+		{
+			$this->prepared(TRUE);
 		}
 	}
 
@@ -352,9 +324,6 @@ abstract class Hive_Model {
 				':model' => get_class($this),
 			));
 		}
-
-		// Remove changed value
-		unset($this->__changed[$name]);
 
 		// Import field data
 		$field = $meta->fields[$name];
@@ -547,11 +516,8 @@ abstract class Hive_Model {
 		// Change state
 		if ($this->__state['loaded'] = (bool) $state)
 		{
-			// Move changes into data
-			$this->__data = array_merge($this->__data, $this->__changed);
-
-			// Clear all changes
-			$this->__changed = array();
+			// Compact the current changes, the model is loaded
+			$this->__data->compact();
 
 			// Loading is done when the model is loaded
 			$this->loading(FALSE);
@@ -598,7 +564,7 @@ abstract class Hive_Model {
 	 */
 	public function changed()
 	{
-		return $this->__changed;
+		return $this->__data->changed();
 	}
 
 	/**
@@ -614,14 +580,17 @@ abstract class Hive_Model {
 		// Import meta data
 		$meta = static::meta($this);
 
-		// Get a list of all fields
-		$fields = array_keys($meta->fields);
+		// Create a new data set
+		$data = array();
 
-		foreach ($fields as $name)
+		foreach ($meta->fields as $name => $field)
 		{
-			// Reset the field to the default value
-			$this->__unset($name);
+			// Set each field to the default value
+			$data[$name] = $field->value($field->default);
 		}
+
+		// Create a new data store
+		$this->__data = new Hive_Storage($data);
 
 		// Reset the model state
 		$this
@@ -641,7 +610,7 @@ abstract class Hive_Model {
 	 * @param   array    values to change
 	 * @return  $this
 	 */
-	public function values($values, $clean = FALSE)
+	public function values($values)
 	{
 		foreach ($values as $name => $value)
 		{
@@ -737,21 +706,23 @@ abstract class Hive_Model {
 		// Load a single row as an object
 		$result = $query
 			->as_object(FALSE)
-			->execute($meta->db)
-			->current();
+			->execute($meta->db);
 
-		if ($result)
+		if ($result->count())
 		{
 			// A result has been found, load the values
 			$this
 				->loading(TRUE)
-				->values($result)
+				->values($result->current())
 				->loaded(TRUE);
 		}
 		else
 		{
 			// No result was found, this object is not properly prepared
-			$this->prepared(FALSE);
+			$this
+				->prepared(FALSE)
+				->loaded(FALSE)
+				;
 		}
 
 		return $this;
@@ -1273,9 +1244,9 @@ abstract class Hive_Model {
 
 		foreach ($meta->fields as $name => $field)
 		{
-			if (array_key_exists($name, $this->__changed))
+			if ($this->__data->is_changed($name))
 			{
-				$query->where($meta->column($name), '=', $this->__changed[$name]);
+				$query->where($meta->column($name), '=', $this->__data[$name]);
 			}
 			elseif ($field->unique AND $this->__data[$name])
 			{

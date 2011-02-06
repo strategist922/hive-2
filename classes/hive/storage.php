@@ -64,6 +64,16 @@ class Hive_Storage extends ArrayObject {
 	}
 
 	/**
+	 * Check if a field has been changed.
+	 *
+	 * @return  boolean
+	 */
+	public function is_changed($name)
+	{
+		return array_key_exists($name, $this->_original);
+	}
+
+	/**
 	 * Clear original values. Do this after the stored changes have been saved.
 	 *
 	 *     $storage->compact();
